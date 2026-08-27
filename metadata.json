@@ -1,0 +1,6 @@
+{
+  "name": "PFT — PRIVACY FIRST TRUST AI",
+  "description": "Production-grade, privacy-first conversational AI with 0-day retention privacy and zero-delay local execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
