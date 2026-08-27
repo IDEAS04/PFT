@@ -26,7 +26,7 @@ export async function processLocalAiRequest(
   const cleanQuery = lower.replace(/[!.,?]/g, '').trim();
   const risk = detectRiskDomain(trimmed);
 
-  const privacyNotice = '🔒 On-device • 0 bytes sent';
+  const privacyNotice = '🔒 PFT Protected · Private session · No persistent memory';
 
   // 1. Natural Greetings (Hi, Hello, Hey, etc.)
   if (isGreeting(cleanQuery)) {

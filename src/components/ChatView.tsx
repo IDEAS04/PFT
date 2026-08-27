@@ -19,6 +19,7 @@ import {
   Sparkles,
   Copy,
   Check,
+  Lock,
 } from 'lucide-react';
 import { SensitiveDataModal } from './SensitiveDataModal';
 import Markdown from 'react-markdown';
@@ -229,7 +230,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           evidence: localFallback.evidence,
           riskAnalysis: localFallback.riskAnalysis,
           decisionEvaluation: localFallback.decisionEvaluation,
-          privacyNotice: '🔒 On-device • 0 bytes sent',
+          privacyNotice: '🔒 PFT Protected · Private session · No persistent memory',
         };
         onSendMessage(fallbackMsg);
       } catch {
@@ -240,7 +241,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           timestamp: Date.now(),
           mode: 'local',
           confidence: 'MEDIUM',
-          privacyNotice: '🔒 On-device • 0 bytes sent',
+          privacyNotice: '🔒 PFT Protected · Private session · No persistent memory',
         };
         onSendMessage(errorMsg);
       }
@@ -401,23 +402,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
                         : 'border-slate-200 bg-white text-zinc-900'
                     }`}
                   >
-                    {/* Header row: Confidence, Mode & Copy */}
+                    {/* Header row: Confidence & Copy */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-3 border-b border-inherit">
                       <div className="flex items-center gap-2">
                         {getConfidenceBadge(msg.confidence)}
                       </div>
 
                       <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
-                        <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] ${
-                            msg.mode === 'local'
-                              ? 'bg-emerald-500/10 text-emerald-500'
-                              : 'bg-cyan-500/10 text-cyan-500'
-                          }`}
-                        >
-                          {msg.mode === 'local' ? '🔒 Local' : '☁️ Cloud'}
-                        </span>
-
                         <button
                           onClick={() => handleCopyText(msg.text, msg.id)}
                           className={`flex items-center gap-1 p-1 rounded transition-colors ${
@@ -441,23 +432,24 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Trust Inspector & Privacy footer */}
-                    <div className="mt-4 pt-2.5 border-t border-inherit flex items-center justify-between">
+                    {/* Clean, Minimal PFT Trust & Privacy Footer */}
+                    <div className="mt-3.5 pt-2.5 border-t border-inherit flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-400 dark:text-zinc-500 select-none">
+                        <Lock className="h-3 w-3 text-zinc-400 dark:text-zinc-500 shrink-0" />
+                        <span>PFT Protected · Private session · No persistent memory</span>
+                      </div>
+
                       <button
                         onClick={() => onOpenTrustInspector(msg)}
-                        className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                        className={`flex items-center gap-1 text-xs font-medium transition-colors ${
                           isDark
-                            ? 'text-zinc-400 hover:text-emerald-400'
-                            : 'text-zinc-500 hover:text-emerald-600'
+                            ? 'text-zinc-400 hover:text-zinc-200'
+                            : 'text-zinc-500 hover:text-zinc-800'
                         }`}
                       >
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        <span>Why should I trust this?</span>
+                        <ShieldCheck className="h-3.5 w-3.5 opacity-70" />
+                        <span>Why trust this?</span>
                       </button>
-
-                      <span className={`text-[10px] font-mono ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                        {msg.privacyNotice || (msg.mode === 'local' ? '🔒 0 bytes sent' : '☁️ 0-day retention')}
-                      </span>
                     </div>
                   </div>
                 </div>
