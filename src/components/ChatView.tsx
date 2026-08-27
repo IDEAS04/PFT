@@ -12,12 +12,13 @@ import { processLocalAiRequest } from '../lib/localAi';
 import { storage } from '../lib/storage';
 import {
   Send,
-  Lock,
   ShieldCheck,
   CheckCircle2,
   AlertCircle,
   HelpCircle,
   Sparkles,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { SensitiveDataModal } from './SensitiveDataModal';
 import Markdown from 'react-markdown';
@@ -29,6 +30,7 @@ interface ChatViewProps {
   onToggleMode: (mode: ProcessingMode) => void;
   onOpenTrustInspector: (msg: Message) => void;
   onTriggerConsequentialAction: (action: ConsequentialActionRequest) => void;
+  onClearChat?: () => void;
   theme?: 'light' | 'dark';
 }
 
@@ -43,6 +45,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const selectedEngine: GroundingEngine = 'hybrid';
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
 
@@ -65,6 +68,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  const handleCopyText = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedMessageId(id);
+    setTimeout(() => {
+      setCopiedMessageId(null);
+    }, 2000);
+  };
 
   const handleInitiateSend = (textToSend: string) => {
     const trimmed = textToSend.trim();
@@ -92,7 +103,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     setInputText('');
   };
 
-  // Execution flow
+  // Execution flow with Gemini multi-turn conversation
   const executeSend = async (
     textToSend: string,
     wasRedacted: boolean = false,
@@ -127,6 +138,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           timestamp: Date.now(),
           mode: 'local',
           engine: selectedEngine,
+          modelUsed: 'On-Device Engine',
           confidence: localResult.confidence,
           evidence: localResult.evidence,
           riskAnalysis: localResult.riskAnalysis,
@@ -136,7 +148,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
         onSendMessage(pftMsg);
       } else {
-        // ☁️ PRIVATE CLOUD
+        // ☁️ PRIVATE CLOUD MULTI-TURN GEMINI CHAT
         const memContext = storage.isMemoryEnabled()
           ? storage
               .getMemories()
@@ -147,7 +159,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         storage.logOutboundRequest({
           endpoint: '/api/chat',
           service: 'Google Gemini',
-          purpose: 'Private Cloud AI',
+          purpose: 'Private Multi-turn Gemini Chat',
           payloadSummary: textToSend.substring(0, 60) + (textToSend.length > 60 ? '...' : ''),
           bytesSent: new TextEncoder().encode(textToSend).length,
           retentionPolicy: '0-day ephemeral',
@@ -155,15 +167,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
           piiChecked: true,
         });
 
+        // Send multi-turn history to server
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: textToSend,
-            history: messages.slice(-4),
+            history: messages.slice(-10).map((m) => ({
+              sender: m.sender,
+              text: m.text,
+            })),
             searchGrounded: true,
             memoryContext: memContext,
             engine: selectedEngine,
+            model: 'auto',
           }),
         });
 
@@ -180,6 +197,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           timestamp: Date.now(),
           mode: 'cloud',
           engine: selectedEngine,
+          modelUsed: data.modelUsed,
           confidence: data.confidence || 'HIGH',
           sources: data.sources || [],
           evidence: data.evidence || [],
@@ -206,6 +224,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           timestamp: Date.now(),
           mode: 'local',
           engine: selectedEngine,
+          modelUsed: 'On-Device Safe Mode',
           confidence: localFallback.confidence,
           evidence: localFallback.evidence,
           riskAnalysis: localFallback.riskAnalysis,
@@ -293,31 +312,43 @@ export const ChatView: React.FC<ChatViewProps> = ({
   };
 
   const examplePrompts = [
-    { label: '💻 Code & Architecture', prompt: 'Write a TypeScript debounce utility function with unit tests' },
-    { label: '🔬 Science & Physics', prompt: 'Explain quantum entanglement with simple, clear analogies' },
-    { label: '🧠 Deep Logic & Math', prompt: 'Explain step-by-step how neural network backpropagation works' },
-    { label: '⚖️ Decision Framework', prompt: 'Should I build my app as a microservices architecture or a modular monolith?' },
+    {
+      label: '💻 Code & Architecture',
+      prompt: 'Design a high-throughput async queue in TypeScript with concurrency limits and retry exponential backoff',
+    },
+    {
+      label: '🔬 Logic & Proofs',
+      prompt: 'Explain step-by-step how transformer self-attention computes query, key, and value vectors mathematically',
+    },
+    {
+      label: '⚡ Rapid Summary',
+      prompt: 'Give me a 3-bullet summary of the core principles of zero-trust security',
+    },
+    {
+      label: '⚖️ Strategy & Trade-offs',
+      prompt: 'Should an early-stage startup build on serverless or provisioned container infrastructure?',
+    },
   ];
 
   return (
     <div className="flex h-full flex-col justify-between max-w-4xl mx-auto px-4 sm:px-6">
       {/* Messages Stream Area */}
-      <div className="flex-1 overflow-y-auto pt-4 pb-6 space-y-6">
+      <div className="flex-1 overflow-y-auto pt-2 pb-6 space-y-5">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-4">
             <div
-              className={`flex h-16 w-16 items-center justify-center rounded-2xl mb-4 ${
-                isDark ? 'bg-zinc-800/80 border border-zinc-700 text-white' : 'bg-zinc-100 text-zinc-800'
+              className={`flex h-14 w-14 items-center justify-center rounded-2xl mb-3 shadow-2xs ${
+                isDark ? 'bg-zinc-800/90 border border-zinc-700 text-white' : 'bg-zinc-100 text-zinc-800'
               }`}
             >
-              <Sparkles className="h-8 w-8 text-emerald-400" />
+              <Sparkles className="h-7 w-7 text-emerald-400" />
             </div>
 
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight mb-2">
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight mb-1">
               Privacy-First AI Assistant
             </h2>
-            <p className={`max-w-md text-sm mb-6 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Natural, intelligent conversations with 0-day retention privacy and zero-delay execution.
+            <p className={`max-w-md text-xs sm:text-sm mb-6 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+              Natural, intelligent multi-turn conversation with 0-day retention privacy and zero-delay execution.
             </p>
 
             {/* Quick Prompts */}
@@ -361,7 +392,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   </div>
                 </div>
               ) : (
-                /* PFT Assistant Message Container */
+                /* Assistant Message Container */
                 <div className="flex flex-col space-y-3">
                   <div
                     className={`rounded-2xl border p-4 sm:p-5 transition-all shadow-2xs ${
@@ -370,15 +401,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
                         : 'border-slate-200 bg-white text-zinc-900'
                     }`}
                   >
-                    {/* Header row: Confidence & Processing Mode */}
+                    {/* Header row: Confidence, Mode & Copy */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-3 border-b border-inherit">
                       <div className="flex items-center gap-2">
                         {getConfidenceBadge(msg.confidence)}
                       </div>
 
-                      <div className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-400">
+                      <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
                         <span
-                          className={`rounded px-1.5 py-0.5 ${
+                          className={`rounded px-1.5 py-0.5 text-[10px] ${
                             msg.mode === 'local'
                               ? 'bg-emerald-500/10 text-emerald-500'
                               : 'bg-cyan-500/10 text-cyan-500'
@@ -386,6 +417,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
                         >
                           {msg.mode === 'local' ? '🔒 Local' : '☁️ Cloud'}
                         </span>
+
+                        <button
+                          onClick={() => handleCopyText(msg.text, msg.id)}
+                          className={`flex items-center gap-1 p-1 rounded transition-colors ${
+                            isDark ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-slate-100 text-zinc-500'
+                          }`}
+                          title="Copy response"
+                        >
+                          {copiedMessageId === msg.id ? (
+                            <Check className="h-3.5 w-3.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </button>
                       </div>
                     </div>
 

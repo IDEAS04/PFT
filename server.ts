@@ -176,16 +176,46 @@ function detectConsequentialAction(prompt: string): any | null {
 }
 
 // Helper for robust Gemini generation with automatic fallback
-async function generateWithGeminiFallback(ai: GoogleGenAI, contents: any, baseConfig: any): Promise<{ text: string; groundingChunks: any[]; modelUsed: string; wasRateLimited?: boolean }> {
-  // Primary model and fallback model lists according to gemini-api guidelines
-  const modelsToTry = [
-    { name: 'gemini-3.7-flash', useTools: true },
-    { name: 'gemini-2.5-flash', useTools: true },
-    { name: 'gemini-3.1-flash-lite', useTools: true },
-    { name: 'gemini-3.7-flash', useTools: false },
-    { name: 'gemini-2.5-flash', useTools: false },
-    { name: 'gemini-3.1-flash-lite', useTools: false },
-  ];
+async function generateWithGeminiFallback(
+  ai: GoogleGenAI,
+  contents: any,
+  baseConfig: any,
+  requestedModel?: string
+): Promise<{ text: string; groundingChunks: any[]; modelUsed: string; wasRateLimited?: boolean }> {
+  // Determine model priority order based on request
+  let primaryModel = 'gemini-3.5-flash';
+  if (requestedModel === 'gemini-3.1-pro-preview') {
+    primaryModel = 'gemini-3.1-pro-preview';
+  } else if (requestedModel === 'gemini-3.1-flash-lite') {
+    primaryModel = 'gemini-3.1-flash-lite';
+  } else if (requestedModel === 'gemini-3.5-flash') {
+    primaryModel = 'gemini-3.5-flash';
+  }
+
+  // Model fallback waterfall
+  const modelsToTry: { name: string; useTools: boolean }[] = [];
+
+  // 1. Target model with tools (if tools provided)
+  modelsToTry.push({ name: primaryModel, useTools: true });
+
+  // 2. Secondary fallback models
+  if (primaryModel === 'gemini-3.1-pro-preview') {
+    modelsToTry.push({ name: 'gemini-3.5-flash', useTools: true });
+    modelsToTry.push({ name: 'gemini-3.7-flash', useTools: true });
+    modelsToTry.push({ name: 'gemini-3.1-flash-lite', useTools: true });
+  } else if (primaryModel === 'gemini-3.1-flash-lite') {
+    modelsToTry.push({ name: 'gemini-3.5-flash', useTools: true });
+    modelsToTry.push({ name: 'gemini-3.7-flash', useTools: true });
+  } else {
+    modelsToTry.push({ name: 'gemini-3.7-flash', useTools: true });
+    modelsToTry.push({ name: 'gemini-3.1-flash-lite', useTools: true });
+    modelsToTry.push({ name: 'gemini-2.5-flash', useTools: true });
+  }
+
+  // 3. Fallbacks without tools if search grounding was failing
+  modelsToTry.push({ name: primaryModel, useTools: false });
+  modelsToTry.push({ name: 'gemini-3.5-flash', useTools: false });
+  modelsToTry.push({ name: 'gemini-3.1-flash-lite', useTools: false });
 
   for (const item of modelsToTry) {
     try {
@@ -210,11 +240,11 @@ async function generateWithGeminiFallback(ai: GoogleGenAI, contents: any, baseCo
         };
       }
     } catch {
-      // Quietly continue to next model in fallback list on rate-limit (429) or quota constraints
+      // Quietly continue to next model in fallback list on rate-limit or quota
     }
   }
 
-  // If all Gemini model calls fail (e.g. global 429 quota exhaustion), return graceful synthesis
+  // If all Gemini model calls fail, return graceful synthesis
   return {
     text: '',
     groundingChunks: [],
@@ -226,7 +256,17 @@ async function generateWithGeminiFallback(ai: GoogleGenAI, contents: any, baseCo
 // 1. POST /api/chat
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, history = [], searchGrounded = true, memoryContext = '', engine = 'hybrid' } = req.body;
+    const {
+      message,
+      history = [],
+      searchGrounded = true,
+      memoryContext = '',
+      engine = 'hybrid',
+      model = 'auto',
+      roleId = 'general',
+      customSystemInstruction = '',
+    } = req.body;
+
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'Message prompt is required' });
     }
@@ -236,23 +276,84 @@ app.post('/api/chat', async (req, res) => {
     // Check for consequential action
     const pendingAction = detectConsequentialAction(message);
 
+    // Determine target model based on complexity and prompt
+    let targetModel = 'gemini-3.5-flash';
+    const lower = message.toLowerCase();
+
+    if (model === 'gemini-3.1-pro-preview' || roleId === 'complex-reasoning' || roleId === 'code-architect') {
+      targetModel = 'gemini-3.1-pro-preview';
+    } else if (model === 'gemini-3.1-flash-lite' || roleId === 'fast-lite') {
+      targetModel = 'gemini-3.1-flash-lite';
+    } else if (model === 'gemini-3.5-flash' || roleId === 'general' || roleId === 'decision-advisor') {
+      targetModel = 'gemini-3.5-flash';
+    } else if (model === 'auto') {
+      // Auto-detect complexity
+      const isComplex =
+        lower.includes('architecture') ||
+        lower.includes('algorithm') ||
+        lower.includes('refactor') ||
+        lower.includes('proof') ||
+        lower.includes('theorem') ||
+        lower.includes('quantum') ||
+        lower.includes('backpropagation') ||
+        lower.includes('derivation') ||
+        message.length > 500;
+
+      const isFast =
+        lower.startsWith('hi') ||
+        lower.startsWith('hello') ||
+        lower.startsWith('hey') ||
+        lower.length < 30;
+
+      if (isComplex) {
+        targetModel = 'gemini-3.1-pro-preview';
+      } else if (isFast) {
+        targetModel = 'gemini-3.1-flash-lite';
+      } else {
+        targetModel = 'gemini-3.5-flash';
+      }
+    }
+
+    // Role-specific system instructions
+    let roleInstruction = '';
+    switch (roleId) {
+      case 'complex-reasoning':
+        roleInstruction = `ROLE: Senior Research Scientist and Advanced Analytical Thinker.
+- Solve complex problems with deep mathematical precision, logical step-by-step proofs, and rigorous analysis.
+- Provide comprehensive breakdowns of intricate topics and explain edge cases with first-principles reasoning.`;
+        break;
+      case 'code-architect':
+        roleInstruction = `ROLE: Principal Software Architect and Staff Engineer.
+- Deliver production-ready, clean, secure, and idiomatic code with robust error handling, type safety, and architectural best practices.
+- Highlight design patterns, performance implications, and maintainability considerations.`;
+        break;
+      case 'fast-lite':
+        roleInstruction = `ROLE: Rapid Fast Assistant.
+- Prioritize speed, brevity, and immediate actionable clarity.
+- Give direct answers and concise summaries without unnecessary filler or preamble.`;
+        break;
+      case 'decision-advisor':
+        roleInstruction = `ROLE: Executive Strategy Advisor and Decision Consultant.
+- Structure complex dilemmas into clear options, key advantages, critical trade-offs, short-term vs. long-term risks, and actionable decision frameworks.`;
+        break;
+      case 'custom':
+        roleInstruction = customSystemInstruction ? `ROLE: Custom Persona.\n${customSystemInstruction}` : '';
+        break;
+      case 'general':
+      default:
+        roleInstruction = `ROLE: General Assistant.
+- You are a knowledgeable, friendly, versatile, and articulate AI assistant.
+- Provide balanced, helpful, natural, and accurate explanations across all domains.`;
+        break;
+    }
+
     const systemInstruction = `You are PFT, a privacy-first AI assistant.
-Your goal is to provide a natural, intelligent, conversational experience comparable to modern AI assistants such as ChatGPT, Claude, and Gemini.
+${roleInstruction}
 
 CORE BEHAVIOR:
 - Respond naturally, helpfully, and conversationally to the user's message.
 - Do NOT sound like a system diagnostic, terminal, security console, API, or technical status dashboard.
-- Never output robotic headers or unsolicited status boilerplate such as:
-  * "PFT Local Response"
-  * "Processed directly on this device"
-  * "Analysis & Synthesis:"
-  * "Status: Online and ready"
-  * "Privacy Protocol:"
-  * "0-day retention active"
-  * "No persistent profiling"
-  * "Capability:"
-  * "I am fully operational"
-  * "I am standing by"
+- Never output robotic headers or unsolicited status boilerplate.
 - GREETINGS: When the user says "Hi", "Hello", "Hey", "Good morning", or similar greetings, respond warmly, naturally, and briefly (e.g. "Hey! How can I help you today?" or "Hello! What are you working on?").
 - CONVERSATIONAL STYLE:
   * Natural, intelligent, and context-aware.
@@ -261,27 +362,36 @@ CORE BEHAVIOR:
 - PRIVACY:
   * PFT's privacy-first architecture runs silently in the background.
   * Only explain privacy, local processing, retention, encryption, or memory when the user explicitly asks about privacy, data safety, or how PFT works.
-- IDENTITY:
-  * You are PFT. You deliver top-tier conversational helpfulness across coding, writing, reasoning, science, analysis, and everyday chat.
 
 ${memoryContext ? `User-Controlled Explicit Memory Context:\n${memoryContext}\n` : ''}`;
 
-    let promptContents: any = message;
+    // Multi-turn conversation history contents for Gemini API
+    const formattedContents: any[] = [];
     if (Array.isArray(history) && history.length > 0) {
-      const formattedHistory = history.slice(-6).map((h: any) => `${h.sender === 'user' ? 'User' : 'PFT'}: ${h.text}`).join('\n\n');
-      promptContents = `${formattedHistory}\n\nUser: ${message}`;
+      for (const h of history.slice(-10)) {
+        if (h && typeof h.text === 'string' && h.text.trim()) {
+          formattedContents.push({
+            role: h.sender === 'user' ? 'user' : 'model',
+            parts: [{ text: h.text.trim() }],
+          });
+        }
+      }
     }
+    formattedContents.push({
+      role: 'user',
+      parts: [{ text: message.trim() }],
+    });
 
     const config: any = {
       systemInstruction,
-      temperature: 0.7,
+      temperature: targetModel === 'gemini-3.1-pro-preview' ? 0.4 : 0.7,
     };
 
     if (searchGrounded) {
       config.tools = [{ googleSearch: {} }];
     }
 
-    const result = await generateWithGeminiFallback(ai, promptContents, config);
+    const result = await generateWithGeminiFallback(ai, formattedContents, config, targetModel);
 
     let responseText = result.text;
     let sources = extractGroundingSources(result.groundingChunks);
@@ -297,33 +407,25 @@ ${memoryContext ? `User-Controlled Explicit Memory Context:\n${memoryContext}\n`
     const evidence: any[] = [
       {
         id: 'ev-1',
-        claim: `Grounded via ${engine === 'grok' ? 'Grok Fast-Insight Engine' : engine === 'chatgpt' ? 'ChatGPT Analytical Framework' : 'Unified ChatGPT + Grok + Gemini Grounding'}`,
+        claim: `Grounded via Gemini Cloud Intelligence (${result.modelUsed})`,
         classification: sources.length > 0 ? 'VERIFIED' : 'INFERENCE',
-        sources: sources.length > 0 ? sources.map(s => s.title).slice(0, 3) : ['Multi-Engine Knowledge Base'],
+        sources: sources.length > 0 ? sources.map(s => s.title).slice(0, 3) : ['Gemini Knowledge Base'],
         confidenceNotes: sources.length > 0 ? 'Live search indexed and verified' : 'Synthesized using multi-perspective logic model',
       }
     ];
 
-    if (sources.length > 1) {
-      evidence.push({
-        id: 'ev-2',
-        claim: 'Cross-checked against multiple independent web publisher indices',
-        classification: 'VERIFIED',
-        sources: sources.slice(0, 2).map(s => s.domain),
-        confidenceNotes: 'Multi-source confirmation established',
-      });
-    }
-
     return res.json({
       text: responseText,
       confidence,
+      modelUsed: result.modelUsed,
+      roleId,
       sources,
       evidence,
       pendingAction,
       sourcesAgreementRate: sources.length >= 2 ? 94 : undefined,
       privacyNotice: result.wasRateLimited 
         ? '🔒 Fallback Local Mode: Zero external data retained.'
-        : `☁️ Private Cloud (${engine.toUpperCase()} Grounded): TLS 1.3 encrypted • 0-day retention.`,
+        : `☁️ Private Cloud (${result.modelUsed}): TLS 1.3 encrypted • 0-day retention.`,
       tokensCount: Math.round(responseText.length / 4),
     });
   } catch {

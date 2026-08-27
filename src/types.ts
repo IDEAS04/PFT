@@ -2,6 +2,18 @@ export type ProcessingMode = 'local' | 'cloud';
 
 export type GroundingEngine = 'hybrid' | 'grok' | 'chatgpt' | 'local';
 
+export type GeminiModelId = 'gemini-3.1-pro-preview' | 'gemini-3.5-flash' | 'gemini-3.1-flash-lite' | 'auto';
+
+export interface ChatbotRole {
+  id: string;
+  name: string;
+  badge: string;
+  model: GeminiModelId;
+  description: string;
+  systemInstruction: string;
+  icon: string;
+}
+
 export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
 
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -133,6 +145,9 @@ export interface Message {
   timestamp: number;
   mode: ProcessingMode;
   engine?: GroundingEngine;
+  modelUsed?: string;
+  roleId?: string;
+  roleName?: string;
   confidence?: ConfidenceLevel;
   sources?: GroundingSource[];
   evidence?: EvidenceItem[];

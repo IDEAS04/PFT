@@ -146,6 +146,7 @@ export function App() {
           onToggleMode={handleToggleMode}
           onOpenTrustInspector={(msg) => setInspectMessage(msg)}
           onTriggerConsequentialAction={(act) => setPendingAction(act)}
+          onClearChat={handleClearChat}
           theme={theme}
         />
       </main>
